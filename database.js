@@ -7,12 +7,19 @@
 
 require('dotenv').config();
 const path = require('path');
+const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { registrarEventoSeguridad } = require('./security.logger');
 
 const DB_PATH = path.isAbsolute(process.env.DB_PATH || '')
   ? process.env.DB_PATH
   : path.resolve(__dirname, process.env.DB_PATH || 'creditos.db');
+
+// Garantizar que el directorio contenedor exista en entornos Linux / Hostinger
+const dbDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
 
 // Instancia de conexión a SQLite
 const db = new sqlite3.Database(DB_PATH, (err) => {
@@ -82,6 +89,40 @@ const initDatabase = () => {
         await dbRun('PRAGMA trusted_schema = OFF;');
 
         console.log('[*] Verificando y creando esquemas relacionales BPM...');
+
+        // 1.5. Tabla: usuarios (Directorio Institucional Bancario RBAC)
+        await dbRun(`
+          CREATE TABLE IF NOT EXISTS usuarios (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE,
+            username TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL,
+            nombre TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('ASESOR', 'OFICIAL_CAMPO', 'COMITE_RIESGOS', 'AUDITOR_SOX', 'ADMIN')),
+            cargo TEXT,
+            departamento TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
+
+        // Seed inicial de usuarios institucionales si la tabla está vacía
+        const conteoUsuarios = await dbGet('SELECT COUNT(*) as total FROM usuarios;');
+        if (conteoUsuarios && conteoUsuarios.total === 0) {
+          console.log('[*] Poblano directorio institucional de usuarios bancarios...');
+          const usuariosSeed = [
+            ['usr_asesor_01', 'asesor@aurum.com', 'asesor', 'Password123!', 'Valeria Alarcón', 'ASESOR', 'Asesora Senior de Créditos', 'Banca Personas & Consumo'],
+            ['usr_oficial_01', 'oficial@aurum.com', 'oficial', 'Password123!', 'Marcos Villalba', 'OFICIAL_CAMPO', 'Oficial de Mesa de Control & Verificación', 'Operaciones & Terreno'],
+            ['usr_comite_01', 'comite@aurum.com', 'comite', 'Password123!', 'Dr. Santiago Morales', 'COMITE_RIESGOS', 'Vocal Principal de Riesgo Crediticio', 'Comité de Riesgos & Dictámenes'],
+            ['usr_auditor_01', 'auditor@aurum.com', 'auditor', 'Password123!', 'Elena Rivas', 'AUDITOR_SOX', 'Auditora Forense de Cumplimiento SOX', 'Compliance & Control Interno'],
+            ['usr_admin_01', 'admin@aurum.com', 'admin', 'Password123!', "Carlos D'Alessandro", 'ADMIN', 'Arquitecto y Administrador del Sistema', 'Tecnología & Seguridad Bancaria']
+          ];
+          for (const u of usuariosSeed) {
+            await dbRun(
+              'INSERT INTO usuarios (id, email, username, password, nombre, role, cargo, departamento) VALUES (?, ?, ?, ?, ?, ?, ?, ?);',
+              u
+            );
+          }
+        }
 
         // 2. Tabla: solicitudes_credito (Entidad Raíz del Proceso BPM)
         await dbRun(`
@@ -189,6 +230,57 @@ const initDatabase = () => {
           BEFORE DELETE ON bitacora_auditoria
           BEGIN
             SELECT RAISE(ABORT, 'VIOLACION CRITICA DE AUDITORIA: Los registros en bitacora_auditoria son estrictamente inmutables. Operacion DELETE denegada.');
+          END;
+        `);
+
+        // 7. Tabla: trazabilidad_auditoria (Trazabilidad y Cumplimiento Normativo SOX)
+        await dbRun(`
+          CREATE TABLE IF NOT EXISTS trazabilidad_auditoria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            solicitud_id INTEGER,
+            accion TEXT NOT NULL,
+            usuario_responsable TEXT NOT NULL,
+            resultado TEXT,
+            FOREIGN KEY (solicitud_id) REFERENCES solicitudes_credito(id) ON DELETE SET NULL
+          );
+        `);
+
+        await dbRun('CREATE INDEX IF NOT EXISTS idx_trazabilidad_solicitud ON trazabilidad_auditoria(solicitud_id);');
+        await dbRun('CREATE INDEX IF NOT EXISTS idx_trazabilidad_timestamp ON trazabilidad_auditoria(timestamp);');
+
+        // Sincronización de registros preexistentes
+        await dbRun(`
+          INSERT INTO trazabilidad_auditoria (id, timestamp, solicitud_id, accion, usuario_responsable, resultado)
+          SELECT id, timestamp, solicitud_id, accion, usuario_responsable, resultado
+          FROM bitacora_auditoria
+          WHERE id NOT IN (SELECT id FROM trazabilidad_auditoria);
+        `);
+
+        // TRIGGERS WORM PARA trazabilidad_auditoria (Write Once, Read Many)
+        await dbRun(`
+          CREATE TRIGGER IF NOT EXISTS trg_prevent_update_trazabilidad_auditoria
+          BEFORE UPDATE ON trazabilidad_auditoria
+          BEGIN
+            SELECT RAISE(ABORT, 'VIOLACION CRITICA DE AUDITORIA: Los registros en trazabilidad_auditoria son estrictamente inmutables. Operacion UPDATE denegada.');
+          END;
+        `);
+
+        await dbRun(`
+          CREATE TRIGGER IF NOT EXISTS trg_prevent_delete_trazabilidad_auditoria
+          BEFORE DELETE ON trazabilidad_auditoria
+          BEGIN
+            SELECT RAISE(ABORT, 'VIOLACION CRITICA DE AUDITORIA: Los registros en trazabilidad_auditoria son estrictamente inmutables. Operacion DELETE denegada.');
+          END;
+        `);
+
+        // Replicación en tiempo real de eventos de auditoría
+        await dbRun(`
+          CREATE TRIGGER IF NOT EXISTS trg_sync_bitacora_to_trazabilidad
+          AFTER INSERT ON bitacora_auditoria
+          BEGIN
+            INSERT OR IGNORE INTO trazabilidad_auditoria (id, timestamp, solicitud_id, accion, usuario_responsable, resultado)
+            VALUES (NEW.id, NEW.timestamp, NEW.solicitud_id, NEW.accion, NEW.usuario_responsable, NEW.resultado);
           END;
         `);
 

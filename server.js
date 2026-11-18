@@ -223,8 +223,14 @@ app.get('/', (req, res) => {
 // ----------------------------------------------------------------------------
 // Soporte de Producción: Servir Frontend React Compilado (Vite / Hostinger)
 // ----------------------------------------------------------------------------
-const frontendDistPath = path.join(__dirname, 'frontend-creditos', 'dist');
-if (fs.existsSync(frontendDistPath)) {
+const posiblesRutasDist = [
+  path.join(__dirname, 'frontend-creditos', 'dist'),
+  path.join(__dirname, 'dist'),
+  path.join(__dirname, 'public')
+];
+const frontendDistPath = posiblesRutasDist.find((r) => fs.existsSync(r));
+
+if (frontendDistPath) {
   app.use(express.static(frontendDistPath));
 
   // SPA Fallback para enrutamiento del lado del cliente
