@@ -227,6 +227,7 @@ app.get('/', (req, res) => {
 const posiblesRutasDist = [
   path.join(__dirname, 'frontend-creditos', 'dist'),
   path.join(__dirname, 'dist'),
+  path.join(__dirname, 'docs'),
   path.join(__dirname, 'public')
 ];
 const frontendDistPath = posiblesRutasDist.find((r) => fs.existsSync(r));
