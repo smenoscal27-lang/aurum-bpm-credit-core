@@ -1,0 +1,33 @@
+{
+  "name": "sistema-aprobacion-creditos",
+  "version": "1.0.0",
+  "description": "Backend para Sistema de Aprobación de Créditos de Consumo mediante Flujos Dinámicos (BPM)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "client": "npm run dev --prefix frontend-creditos",
+    "build:client": "npm run build --prefix frontend-creditos",
+    "build": "npm run build --prefix frontend-creditos",
+    "postinstall": "npm install --prefix frontend-creditos",
+    "test:db": "node test-db.js",
+    "test:api": "node test-credit-api.js",
+    "test:security": "node test-security.js"
+  },
+  "keywords": [
+    "bpm",
+    "credit-approval",
+    "express",
+    "sqlite"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^8.7.4",
+    "express-validator": "^7.3.2",
+    "helmet": "^8.3.0",
+    "sqlite3": "^5.1.7"
+  }
+}
